@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+.env
+.env.*
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
