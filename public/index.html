@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PearlPool — PRL Mining Pool</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;
+  --text-dim:#8b949e;--accent:#00d4ff;--green:#00ff88;--red:#ff4757;
+  --yellow:#ffd43b;--radius:8px;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;line-height:1.6;min-height:100vh}
+.container{max-width:1200px;margin:0 auto;padding:16px}
+.mono{font-family:'SF Mono','Fira Code','Fira Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+
+/* Header */
+.header{text-align:center;padding:40px 0 32px;border-bottom:1px solid var(--border);margin-bottom:32px}
+.header h1{font-size:2.4em;font-weight:700;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:12px}
+.pearl-icon{
+  width:48px;height:48px;border-radius:50%;display:inline-block;
+  background:radial-gradient(circle at 35% 35%,#fff 0%,#e0f0ff 20%,#a0d8ef 45%,#00d4ff 70%,#0066aa 100%);
+  box-shadow:0 0 20px rgba(0,212,255,0.4),inset 0 -4px 8px rgba(0,0,0,0.2);
+}
+.header .tagline{color:var(--text-dim);font-size:1.1em}
+.header .version{
+  display:inline-block;background:var(--accent);color:#000;padding:2px 10px;
+  border-radius:12px;font-size:0.75em;font-weight:600;margin-left:8px;vertical-align:middle;
+}
+
+/* Stats Grid */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:32px}
+.stat-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;transition:all 0.3s ease;position:relative;overflow:hidden;
+}
+.stat-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 4px 20px rgba(0,212,255,0.1)}
+.stat-card .label{font-size:0.8em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px}
+.stat-card .value{font-size:1.6em;font-weight:700;color:var(--accent);transition:all 0.3s}
+.stat-card .value.green{color:var(--green)}
+.stat-card .pulse{animation:pulse 0.6s ease}
+@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
+
+/* Miner Lookup */
+.miner-section{margin-bottom:32px}
+.section-title{font-size:1.3em;font-weight:600;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.lookup-bar{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.lookup-bar input{
+  flex:1;min-width:280px;padding:10px 16px;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text);font-size:0.95em;font-family:inherit;outline:none;
+  transition:border-color 0.2s;
+}
+.lookup-bar input:focus{border-color:var(--accent)}
+.lookup-bar button{
+  padding:10px 24px;background:var(--accent);color:#000;border:none;border-radius:var(--radius);
+  font-weight:600;cursor:pointer;font-size:0.95em;transition:all 0.2s;
+}
+.lookup-bar button:hover{background:#33ddff;transform:translateY(-1px)}
+
+.miner-panel{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:24px;display:none;
+}
+.miner-panel.visible{display:block;animation:fadeIn 0.3s ease}
+.miner-panel .miner-address{color:var(--accent);font-size:0.9em;word-break:break-all;margin-bottom:16px}
+.miner-stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px}
+.miner-stat .label{font-size:0.75em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em}
+.miner-stat .value{font-size:1.2em;font-weight:600;color:var(--text);margin-top:2px}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Blocks Table */
+.blocks-section{margin-bottom:32px}
+.blocks-table{width:100%;border-collapse:collapse;background:var(--card);border-radius:var(--radius);overflow:hidden;border:1px solid var(--border)}
+.blocks-table th{
+  text-align:left;padding:12px 16px;font-size:0.75em;color:var(--text-dim);
+  text-transform:uppercase;letter-spacing:0.05em;background:rgba(0,0,0,0.2);border-bottom:1px solid var(--border);
+}
+.blocks-table td{padding:10px 16px;border-bottom:1px solid var(--border);font-size:0.9em}
+.blocks-table tr:last-child td{border-bottom:none}
+.blocks-table tr:hover{background:rgba(0,212,255,0.03)}
+.blocks-table .addr{color:var(--accent);cursor:pointer}
+.blocks-table .addr:hover{text-decoration:underline}
+.blocks-table .height{font-weight:600;color:var(--green)}
+.blocks-table .reward{color:var(--yellow)}
+.blocks-table .confirmations{color:var(--text-dim)}
+
+/* Chart */
+.chart-section{margin-bottom:32px}
+.chart-container{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;position:relative;
+}
+.chart-container canvas{width:100%;height:280px;display:block}
+.chart-tooltip{
+  position:absolute;background:rgba(22,27,34,0.95);border:1px solid var(--accent);
+  padding:8px 12px;border-radius:6px;font-size:0.8em;pointer-events:none;
+  display:none;z-index:10;backdrop-filter:blur(4px);
+}
+
+/* Quick Start */
+.quickstart{margin-bottom:32px}
+.code-block{
+  background:#010409;border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 20px;font-family:'SF Mono','Fira Code','Fira Mono',Menlo,Consolas,monospace;
+  font-size:0.9em;overflow-x:auto;position:relative;line-height:1.8;
+}
+.code-block .cmd{color:var(--green)}
+.code-block .comment{color:var(--text-dim)}
+.copy-btn{
+  position:absolute;top:8px;right:8px;background:var(--border);border:none;
+  color:var(--text-dim);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75em;
+}
+.copy-btn:hover{color:var(--text);background:#484f58}
+.endpoints{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:16px;
+}
+.endpoint{
+  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px 16px;display:flex;align-items:center;gap:12px;
+}
+.endpoint .proto{color:var(--green);font-weight:600}
+.endpoint .host{color:var(--text)}
+
+/* Footer */
+.footer{text-align:center;padding:32px 0;color:var(--text-dim);font-size:0.85em;border-top:1px solid var(--border)}
+.footer a{color:var(--accent);text-decoration:none}
+.footer a:hover{text-decoration:underline}
+
+/* Responsive */
+@media(max-width:640px){
+  .header h1{font-size:1.8em}
+  .pearl-icon{width:36px;height:36px}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+  .lookup-bar input{min-width:200px}
+  .blocks-table{font-size:0.8em}
+  .blocks-table th,.blocks-table td{padding:8px 10px}
+}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:#484f58}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1><span class="pearl-icon"></span>PearlPool <span class="version">v2.0.0</span></h1>
+    <div class="tagline">Open-source PRL Mining Pool</div>
+  </div>
+
+  <!-- Stats Grid -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Pool Hashrate</div>
+      <div class="value mono" id="poolHashrate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Active Miners</div>
+      <div class="value mono" id="activeMiners">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Blocks Found</div>
+      <div class="value green mono" id="blocksFound">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Pool Fee</div>
+      <div class="value mono">1%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Network Hashrate</div>
+      <div class="value mono" id="networkHashrate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Network Difficulty</div>
+      <div class="value mono" id="networkDifficulty">—</div>
+    </div>
+  </div>
+
+  <!-- Miner Lookup -->
+  <div class="miner-section">
+    <div class="section-title">Miner Lookup</div>
+    <div class="lookup-bar">
+      <input type="text" id="minerAddress" placeholder="Enter PRL wallet address (prl1p...)" spellcheck="false" autocomplete="off">
+      <button onclick="lookupMiner()" id="lookupBtn">Search</button>
+    </div>
+    <div class="miner-panel" id="minerPanel">
+      <div class="miner-address mono" id="minerAddrDisplay"></div>
+      <div class="miner-stats-grid">
+        <div class="miner-stat">
+          <div class="label">Hashrate</div>
+          <div class="value mono" id="mHashrate">—</div>
+        </div>
+        <div class="miner-stat">
+          <div class="label">Pending Balance</div>
+          <div class="value mono" id="mPending">—</div>
+        </div>
+        <div class="miner-stat">
+          <div class="label">Total Paid</div>
+          <div class="value mono" id="mPaid">—</div>
+        </div>
+        <div class="miner-stat">
+          <div class="label">Shares (24h)</div>
+          <div class="value mono" id="mShares">—</div>
+        </div>
+        <div class="miner-stat">
+          <div class="label">Workers</div>
+          <div class="value mono" id="mWorkers">—</div>
+        </div>
+        <div class="miner-stat">
+          <div class="label">Last Share</div>
+          <div class="value mono" id="mLastShare">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Blocks -->
+  <div class="blocks-section">
+    <div class="section-title">Recent Blocks</div>
+    <table class="blocks-table">
+      <thead>
+        <tr>
+          <th>Height</th>
+          <th>Finder</th>
+          <th>Time</th>
+          <th>Reward</th>
+          <th>Conf.</th>
+        </tr>
+      </thead>
+      <tbody id="blocksBody">
+        <tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:24px">Loading blocks...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Hashrate Chart -->
+  <div class="chart-section">
+    <div class="section-title">Pool Hashrate (24h)</div>
+    <div class="chart-container">
+      <canvas id="hashrateChart"></canvas>
+      <div class="chart-tooltip" id="chartTooltip"></div>
+    </div>
+  </div>
+
+  <!-- Quick Start -->
+  <div class="quickstart">
+    <div class="section-title">Quick Start</div>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      <div><span class="comment"># Install PearlPool</span></div>
+      <div><span class="cmd">curl -sL https://raw.githubusercontent.com/EasyPoolPearl/pearlpool/main/install.sh | bash</span></div>
+      <div style="margin-top:8px"><span class="comment"># Start the pool</span></div>
+      <div><span class="cmd">./pearlpool --wallet prl1pYOUR_WALLET_ADDRESS</span></div>
+      <div style="margin-top:8px"><span class="comment"># Connect your miner</span></div>
+      <div><span class="cmd">alpha-miner --pool stratum+tcp://YOUR_HOST:3333 --wallet prl1pYOUR_ADDR</span></div>
+    </div>
+    <div class="endpoints">
+      <div class="endpoint">
+        <span class="proto">Stratum</span>
+        <span class="host mono">stratum+tcp://0.0.0.0:3333</span>
+      </div>
+      <div class="endpoint">
+        <span class="proto">API</span>
+        <span class="host mono">http://0.0.0.0:8080</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    PearlPool v2.0.0 &middot; Open-source PRL Mining Pool &middot;
+    <a href="https://github.com/EasyPoolPearl/pearlpool" target="_blank">GitHub</a> &middot;
+    MIT License
+  </div>
+
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // === Utilities ===
+  function formatHashrate(h) {
+    if (h == null || isNaN(h)) return '—';
+    const units = ['H/s','KH/s','MH/s','GH/s','TH/s','PH/s'];
+    let i = 0;
+    while (h >= 1000 && i < units.length - 1) { h /= 1000; i++; }
+    return h.toFixed(2) + ' ' + units[i];
+  }
+
+  function formatNumber(n) {
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toLocaleString('en-US');
+  }
+
+  function formatPRL(n) {
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toFixed(4) + ' PRL';
+  }
+
+  function timeAgo(ts) {
+    if (!ts) return '—';
+    const now = Date.now();
+    const diff = Math.floor((now - ts) / 1000);
+    if (diff < 10) return 'just now';
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  function truncateAddr(addr) {
+    if (!addr) return '—';
+    if (addr.length <= 16) return addr;
+    return addr.slice(0, 8) + '…' + addr.slice(-6);
+  }
+
+  function animateValue(el, newText) {
+    if (el.textContent === newText) return;
+    el.textContent = newText;
+    el.classList.remove('pulse');
+    void el.offsetWidth;
+    el.classList.add('pulse');
+  }
+
+  // === API Fetchers ===
+  async function fetchJSON(url) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status);
+      return await r.json();
+    } catch (e) {
+      console.warn('Fetch failed:', url, e.message);
+      return null;
+    }
+  }
+
+  async function updateStats() {
+    const data = await fetchJSON('/api/stats');
+    if (!data) return;
+    animateValue(document.getElementById('poolHashrate'), formatHashrate(data.poolHashrate));
+    animateValue(document.getElementById('activeMiners'), formatNumber(data.activeMiners));
+    animateValue(document.getElementById('blocksFound'), formatNumber(data.blocksFound));
+    animateValue(document.getElementById('networkHashrate'), formatHashrate(data.networkHashrate));
+    animateValue(document.getElementById('networkDifficulty'), formatNumber(data.networkDifficulty));
+  }
+
+  async function updateMinerCount() {
+    const data = await fetchJSON('/api/miners');
+    if (data && data.count != null) {
+      animateValue(document.getElementById('activeMiners'), formatNumber(data.count));
+    }
+  }
+
+  async function updateBlocks() {
+    const data = await fetchJSON('/api/blocks');
+    if (!data || !data.blocks) return;
+    const tbody = document.getElementById('blocksBody');
+    if (!data.blocks.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:24px">No blocks found yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.blocks.slice(0, 20).map(function(b) {
+      return '<tr>' +
+        '<td class="height mono">' + formatNumber(b.height) + '</td>' +
+        '<td class="addr mono" title="' + (b.finder||'') + '">' + truncateAddr(b.finder) + '</td>' +
+        '<td>' + timeAgo(b.timestamp) + '</td>' +
+        '<td class="reward mono">' + formatPRL(b.reward) + '</td>' +
+        '<td class="confirmations mono">' + (b.confirmations != null ? b.confirmations : '—') + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  // === Miner Lookup ===
+  window.lookupMiner = async function() {
+    const addr = document.getElementById('minerAddress').value.trim();
+    if (!addr) return;
+    const btn = document.getElementById('lookupBtn');
+    btn.textContent = 'Searching...';
+    btn.disabled = true;
+    const data = await fetchJSON('/api/miner/' + encodeURIComponent(addr));
+    btn.textContent = 'Search';
+    btn.disabled = false;
+    const panel = document.getElementById('minerPanel');
+    if (!data) {
+      panel.classList.remove('visible');
+      return;
+    }
+    document.getElementById('minerAddrDisplay').textContent = addr;
+    document.getElementById('mHashrate').textContent = formatHashrate(data.hashrate);
+    document.getElementById('mPending').textContent = formatPRL(data.pending);
+    document.getElementById('mPaid').textContent = formatPRL(data.paid);
+    document.getElementById('mShares').textContent = formatNumber(data.shares24h);
+    document.getElementById('mWorkers').textContent = data.workers != null ? data.workers : '—';
+    document.getElementById('mLastShare').textContent = timeAgo(data.lastShare);
+    panel.classList.add('visible');
+  };
+
+  document.getElementById('minerAddress').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') lookupMiner();
+  });
+
+  // === Copy Button ===
+  window.copyCode = function(btn) {
+    const block = btn.parentElement;
+    const text = block.textContent.replace('Copy','').trim();
+    navigator.clipboard.writeText(text).then(function() {
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+    });
+  };
+
+  // === Canvas Chart ===
+  let chartData = null;
+  let chartHoverIdx = -1;
+
+  function drawChart() {
+    const canvas = document.getElementById('hashrateChart');
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const w = rect.width - 40;
+    const h = 260;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.scale(dpr, dpr);
+
+    const padding = { top: 20, right: 20, bottom: 40, left: 70 };
+    const cw = w - padding.left - padding.right;
+    const ch = h - padding.top - padding.bottom;
+
+    ctx.clearRect(0, 0, w, h);
+
+    if (!chartData || !chartData.length) {
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No hashrate data available', w / 2, h / 2);
+      return;
+    }
+
+    const values = chartData.map(function(d) { return d.hashrate || 0; });
+    const times = chartData.map(function(d) { return d.time; });
+    const maxVal = Math.max.apply(null, values) * 1.15 || 1;
+    const minVal = 0;
+
+    function xPos(i) { return padding.left + (i / (chartData.length - 1 || 1)) * cw; }
+    function yPos(v) { return padding.top + ch - ((v - minVal) / (maxVal - minVal)) * ch; }
+
+    // Grid lines
+    ctx.strokeStyle = '#21262d';
+    ctx.lineWidth = 1;
+    var gridLines = 5;
+    for (var g = 0; g <= gridLines; g++) {
+      var gy = padding.top + (g / gridLines) * ch;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, gy);
+      ctx.lineTo(padding.left + cw, gy);
+      ctx.stroke();
+      // Y labels
+      var val = maxVal - (g / gridLines) * (maxVal - minVal);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(formatHashrate(val), padding.left - 8, gy + 4);
+    }
+
+    // X labels
+    var labelCount = Math.min(chartData.length, 8);
+    var step = Math.max(1, Math.floor(chartData.length / labelCount));
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    for (var xi = 0; xi < chartData.length; xi += step) {
+      var x = xPos(xi);
+      var d = new Date(times[xi]);
+      var label = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+      ctx.fillText(label, x, h - padding.bottom + 20);
+    }
+
+    // Gradient fill
+    var gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + ch);
+    gradient.addColorStop(0, 'rgba(0,212,255,0.3)');
+    gradient.addColorStop(1, 'rgba(0,212,255,0.01)');
+    ctx.beginPath();
+    ctx.moveTo(xPos(0), yPos(0));
+    for (var fi = 0; fi < chartData.length; fi++) {
+      ctx.lineTo(xPos(fi), yPos(values[fi]));
+    }
+    ctx.lineTo(xPos(chartData.length - 1), yPos(0));
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = '#00d4ff';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    for (var li = 0; li < chartData.length; li++) {
+      if (li === 0) ctx.moveTo(xPos(li), yPos(values[li]));
+      else ctx.lineTo(xPos(li), yPos(values[li]));
+    }
+    ctx.stroke();
+
+    // Hover point
+    if (chartHoverIdx >= 0 && chartHoverIdx < chartData.length) {
+      var hx = xPos(chartHoverIdx);
+      var hy = yPos(values[chartHoverIdx]);
+      ctx.beginPath();
+      ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#00d4ff';
+      ctx.fill();
+      ctx.strokeStyle = '#0d1117';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      var tooltip = document.getElementById('chartTooltip');
+      var d = new Date(times[chartHoverIdx]);
+      var tLabel = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+      tooltip.innerHTML = tLabel + ' — ' + formatHashrate(values[chartHoverIdx]);
+      tooltip.style.display = 'block';
+      var canvasRect = canvas.getBoundingClientRect();
+      var contRect = canvas.parentElement.getBoundingClientRect();
+      tooltip.style.left = (hx + 20) + 'px';
+      tooltip.style.top = (hy - 10) + 'px';
+    }
+  }
+
+  document.getElementById('hashrateChart').addEventListener('mousemove', function(e) {
+    if (!chartData || !chartData.length) return;
+    var rect = this.getBoundingClientRect();
+    var canvasW = parseFloat(this.style.width);
+    var padding = { left: 70, right: 20 };
+    var cw = canvasW - padding.left - padding.right;
+    var mx = e.clientX - rect.left - padding.left;
+    var idx = Math.round((mx / cw) * (chartData.length - 1));
+    idx = Math.max(0, Math.min(chartData.length - 1, idx));
+    if (idx !== chartHoverIdx) {
+      chartHoverIdx = idx;
+      drawChart();
+    }
+  });
+
+  document.getElementById('hashrateChart').addEventListener('mouseleave', function() {
+    chartHoverIdx = -1;
+    document.getElementById('chartTooltip').style.display = 'none';
+    drawChart();
+  });
+
+  async function updateChart() {
+    var data = await fetchJSON('/api/chart/hashrate');
+    if (data && data.points) {
+      chartData = data.points;
+      drawChart();
+    }
+  }
+
+  window.addEventListener('resize', function() { drawChart(); });
+
+  // === Init & Intervals ===
+  updateStats();
+  updateBlocks();
+  updateChart();
+
+  setInterval(updateStats, 10000);
+  setInterval(updateMinerCount, 30000);
+  setInterval(updateBlocks, 30000);
+  setInterval(updateChart, 300000);
+
+})();
+</script>
+</body>
+</html>
