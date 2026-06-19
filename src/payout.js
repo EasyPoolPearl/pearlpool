@@ -225,6 +225,11 @@ class PPLNSEngine {
       store.creditPending(address, amount);
     }
 
+    // Step 5: Credit pool fee to operator wallet
+    if (this.poolWallet && feeAmount > 0) {
+      store.creditPending(this.poolWallet, feeAmount);
+    }
+
     // Step 5: Record and return the full payout calculation
     return this._recordPayout(block, distributedTotal, feeAmount, efficiencyFactor, minerPayouts);
   }
