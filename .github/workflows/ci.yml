@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: node -c src/pool.js && node -c src/stratum.js && node -c src/scanner.js && node -c src/store.js && node -c src/payout.js
+      - run: echo "Syntax check passed"
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: node -c src/*.js
+      - run: node -e "const s = require('./src/store'); s.addWorker('prl1ptest','w1','127.0.0.1'); s.updateMiner('prl1ptest',{hashrate:1000,shares:10,accepted:10,rejected:0}); const m = s.getMiner('prl1ptest'); console.log('Store OK:', m.address, m.hashrate);"
+      - run: node -e "const P = require('./src/payout'); const p = new P({poolWallet:'prl1ptest',baseFee:0.01}); p.addShare('prl1pminer',100); const r = p.processBlock({hash:'abc',height:100,reward:5000000000,finder:'prl1pminer'}); console.log('Payout OK:', r.distributed, 'distributed,', r.operatorCredit, 'operator');"
+      - run: echo "All tests passed on Node ${{ matrix.node-version }}"
