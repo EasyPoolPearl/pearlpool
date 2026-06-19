@@ -190,6 +190,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
     <div class="miner-panel" id="minerPanel">
       <div class="miner-address mono" id="minerAddrDisplay"></div>
+
+      <!-- Estimated Earnings — prominent display -->
+      <div style="background:linear-gradient(135deg,rgba(0,255,136,0.1),rgba(0,212,255,0.1));border:1px solid rgba(0,255,136,0.3);border-radius:var(--radius);padding:20px;margin-bottom:20px;text-align:center">
+        <div style="font-size:0.8em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Estimated Daily Earnings</div>
+        <div style="font-size:2.2em;font-weight:700;color:var(--green);font-family:'SF Mono','Fira Code',monospace" id="mEstDaily">—</div>
+        <div style="font-size:1em;color:var(--accent);margin-top:4px;font-family:'SF Mono','Fira Code',monospace" id="mEstHourly"></div>
+      </div>
+
       <div class="miner-stats-grid">
         <div class="miner-stat">
           <div class="label">Hashrate</div>
@@ -394,10 +402,19 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     document.getElementById('minerAddrDisplay').textContent = addr;
     document.getElementById('mHashrate').textContent = formatHashrate(data.hashrate);
     document.getElementById('mPending').textContent = formatPRL(data.pending);
-    document.getElementById('mPaid').textContent = formatPRL(data.paid);
-    document.getElementById('mShares').textContent = formatNumber(data.shares24h);
-    document.getElementById('mWorkers').textContent = data.workers != null ? data.workers : '—';
-    document.getElementById('mLastShare').textContent = timeAgo(data.lastShare);
+    document.getElementById('mPaid').textContent = formatPRL(data.totalPaid || data.paid);
+    document.getElementById('mShares').textContent = formatNumber(data.shares || data.shares24h);
+    document.getElementById('mWorkers').textContent = data.workers != null ? (Array.isArray(data.workers) ? data.workers.length : data.workers) : '—';
+    document.getElementById('mLastShare').textContent = timeAgo(data.lastSeen || data.lastShare);
+
+    // Estimated earnings — prominent display
+    if (data.estimated) {
+      document.getElementById('mEstDaily').textContent = data.estimated.displayDaily;
+      document.getElementById('mEstHourly').textContent = data.estimated.displayHourly + ' / hour';
+    } else {
+      document.getElementById('mEstDaily').textContent = '—';
+      document.getElementById('mEstHourly').textContent = '';
+    }
     panel.classList.add('visible');
   };
 
