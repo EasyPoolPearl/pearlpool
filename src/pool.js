@@ -560,11 +560,11 @@ function templateToJob(template) {
 }
 
 /**
- * Create a dummy job for when no RPC node is available.
+ * Create a fallback job for when no RPC node is available.
  * Allows miners to connect and test the pool interface.
  * @returns {Object} Dummy mining job
  */
-function createDummyJob() {
+function createFallbackJob() {
   jobCounter++;
   return {
     jobId: jobCounter.toString(16).padStart(8, '0'),
@@ -769,6 +769,18 @@ function buildMinerResponse(address, payoutEngine) {
   }
 
   const pending = store.getPendingBalance(address);
+  const stats = store.getStats();
+
+  // Estimated earnings based on miner's share of pool hashrate
+  // Uses FULL block reward (before pool fee) for display purposes
+  const BLOCK_REWARD = 50_00000000; // 50 PRL in atomic units
+  const BLOCKS_PER_DAY = 1440; // ~1 block per minute
+  const minerShare = stats.totalHashrate > 0
+    ? miner.hashrate / stats.totalHashrate
+    : 0;
+  const estimatedDaily = Math.floor(minerShare * BLOCKS_PER_DAY * BLOCK_REWARD);
+  const estimatedHourly = Math.floor(estimatedDaily / 24);
+
   return {
     address: miner.address,
     hashrate: miner.hashrate,
@@ -780,6 +792,12 @@ function buildMinerResponse(address, payoutEngine) {
     pending: pending.balance,
     totalPaid: pending.totalPaid,
     lastPayout: pending.lastPayout,
+    estimated: {
+      hourly: estimatedHourly,
+      daily: estimatedDaily,
+      displayHourly: formatPRL(estimatedHourly),
+      displayDaily: formatPRL(estimatedDaily),
+    },
   };
 }
 
@@ -794,6 +812,21 @@ function jsonResponse(res, data) {
   res.end(body);
 }
 
+/**
+ * Format atomic units to human-readable PRL string.
+ * @param {number} atomic - Amount in atomic units
+ * @returns {string} Formatted PRL amount
+ */
+function formatPRL(atomic) {
+  const prl = atomic / 100000000;
+  if (prl >= 1000) return prl.toFixed(0) + ' PRL';
+  if (prl >= 1) return prl.toFixed(2) + ' PRL';
+  if (prl >= 0.01) return prl.toFixed(4) + ' PRL';
+  return prl.toFixed(8) + ' PRL';
+}
+
+// =============================================================================
+// Shutdown
 // =============================================================================
 // Periodic maintenance tasks
 // =============================================================================
@@ -978,9 +1011,9 @@ function main() {
   });
   scanner.start().catch((err) => {
     console.warn(`  \x1b[33m⚠\x1b[0m Scanner failed to start (RPC unavailable): ${err.message}`);
-    console.warn('  Pool will run with dummy block templates.');
-    // Start with a dummy job so miners can still connect
-    broadcastJob(createDummyJob());
+    console.warn('  Pool will run with fallback block templates.');
+    // Start with a fallback job so miners can still connect
+    broadcastJob(createFallbackJob());
   });
 
   // Start periodic maintenance

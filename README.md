@@ -2,19 +2,19 @@
 
 ![Version](https://img.shields.io/badge/version-2.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)
+![Node](https://img.shields.io/badge/node-%3E%3E=18.0.0-brightgreen)
 
-Self-hosted mining pool for the PRL (Pearl) cryptocurrency. Zero dependencies, single binary, runs anywhere Node.js 18+ is available.
+Self-hosted mining pool for the PRL (Pearl) cryptocurrency. Zero npm dependencies, runs anywhere Node.js 18+ is available.
 
 ## Features
 
 - **Stratum Protocol** — Standard stratum+tcp mining interface
-- **PPLNS Payouts** — Pay-Per-Last-N-Shares for fair reward distribution
+- **PPLNS Payouts** — Pay-Per-Last-N-Shares with time-decay weighting
 - **Variable Difficulty** — Automatic vardiff adjusts to miner hashrate
-- **Live Dashboard** — Real-time web UI with stats, charts, and miner lookup
-- **Block Scanner** — Automatic block detection and confirmation tracking
+- **Live Dashboard** — Real-time web UI with stats, hashrate chart, and miner lookup
+- **Block Scanner** — Automatic block detection via PRL node RPC
 - **Multi-worker** — Unlimited workers per wallet address
-- **Zero Dependencies** — Pure Node.js, no npm packages required
+- **Zero Dependencies** — Pure Node.js built-ins only
 
 ## Quick Start
 
@@ -22,11 +22,20 @@ Self-hosted mining pool for the PRL (Pearl) cryptocurrency. Zero dependencies, s
 # Install
 curl -sL https://raw.githubusercontent.com/EasyPoolPearl/pearlpool/main/install.sh | bash
 
-# Run
+# Run (edit start.sh with your wallet, or use --wallet directly)
 ./pearlpool --wallet prl1pYOUR_WALLET_ADDRESS
 ```
 
-The pool will start stratum on port 3333 and the API/dashboard on port 8080.
+The pool starts stratum on port 3333 and the dashboard on port 8080.
+
+### Using start.sh
+
+Edit `start.sh` with your wallet address, then:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
 
 ## CLI Arguments
 
@@ -35,19 +44,18 @@ The pool will start stratum on port 3333 and the API/dashboard on port 8080.
 | `--wallet` | *(required)* | Pool operator's PRL wallet address |
 | `--port` | `3333` | Stratum listen port |
 | `--api-port` | `8080` | HTTP API and dashboard port |
-| `--rpc-url` | `http://127.0.0.1:11332` | PRL node RPC endpoint |
-| `--fee` | `1.0` | Pool fee percentage |
+| `--rpc-url` | `http://127.0.0.1:18555` | PRL node RPC endpoint |
+| `--fee` | `1.0` | Base fee percentage |
 | `--min-payout` | `0.1` | Minimum payout threshold (PRL) |
-| `--log-level` | `info` | Log verbosity: debug, info, warn, error |
 
-Example with all options:
+Example:
 
 ```bash
 ./pearlpool \
   --wallet prl1pYOURADDR \
   --port 3333 \
   --api-port 8080 \
-  --rpc-url http://node.example.com:11332 \
+  --rpc-url http://node.example.com:18555 \
   --fee 1.0 \
   --min-payout 0.5
 ```
@@ -57,17 +65,22 @@ Example with all options:
 PearlPool uses Pay-Per-Last-N-Shares (PPLNS) to distribute block rewards:
 
 1. Miners submit **shares** — partial proof-of-work that demonstrates mining effort.
-2. When a block is found, the reward is split proportionally among all shares in the **PPLNS window** (the last N shares submitted).
-3. Your payout = `(your_shares / total_shares_in_window) × block_reward × (1 - pool_fee)`
-4. The window size is dynamic, targeting ~30 minutes of pool share history.
+2. When a block is found, the reward is split proportionally among all shares in the **PPLNS window**.
+3. Your payout = `(your_effective_shares / total_effective_shares) × net_reward`
+4. The window size is dynamic, targeting ~2× network difficulty in aggregate share-difficulty.
+
+**Effective share weighting** accounts for:
+- Share difficulty (higher diff = more weight)
+- Time decay (exponential, 30-minute half-life — recent shares count more)
+- Pool efficiency (variance-adjusted factor)
+
+**Share difficulty** adjusts automatically (vardiff) based on your hashrate. Target: 1 share per 3 seconds.
 
 This discourages pool-hopping: if you leave before the window fills, you lose credit for earlier shares.
 
-**Share difficulty** adjusts automatically (vardiff) based on your hashrate. Higher hashrate → higher difficulty shares → fewer stale/orphaned shares.
-
 ## Mining Guide
 
-Connect any PRL-compatible miner to the pool's stratum endpoint:
+Connect any PRL-compatible miner:
 
 ```
 stratum+tcp://YOUR_POOL_HOST:3333
@@ -79,7 +92,7 @@ Using `alpha-miner`:
 alpha-miner --pool stratum+tcp://pool.example.com:3333 --wallet prl1pYOUR_ADDR
 ```
 
-Using other miners — point them at `stratum+tcp://HOST:3333` with your wallet as username. Worker names are appended with a dot:
+Worker names are appended with a dot:
 
 ```
 prl1pYOUR_ADDR.worker1
@@ -87,117 +100,51 @@ prl1pYOUR_ADDR.worker1
 
 ## API Reference
 
-All endpoints return JSON.
+All endpoints return JSON. Responses use atomic units (1 PRL = 100,000,000 atomic).
 
 ### `GET /api/stats`
 
-Pool statistics.
-
-```json
-{
-  "poolHashrate": 125000000,
-  "activeMiners": 47,
-  "blocksFound": 132,
-  "networkHashrate": 5000000000,
-  "networkDifficulty": 892345,
-  "lastBlockTime": 1718000000000,
-  "poolFee": 1.0
-}
-```
+Pool-wide statistics.
 
 ### `GET /api/miners`
 
-Active miner count.
-
-```json
-{
-  "count": 47,
-  "miners": ["prl1p...", "prl1p..."]
-}
-```
+List of connected miner addresses and count.
 
 ### `GET /api/miner/:address`
 
-Individual miner stats.
-
-```json
-{
-  "address": "prl1p...",
-  "hashrate": 2500000,
-  "pending": 0.0543,
-  "paid": 12.87,
-  "shares24h": 18432,
-  "workers": 3,
-  "lastShare": 1718000000000
-}
-```
+Individual miner stats including hashrate, pending balance, shares, and **estimated earnings** (based on pool hashrate share).
 
 ### `GET /api/blocks`
 
 Recent blocks found by the pool.
 
-```json
-{
-  "blocks": [
-    {
-      "height": 284510,
-      "hash": "0000abc...",
-      "finder": "prl1p...",
-      "timestamp": 1718000000000,
-      "reward": 12.5,
-      "confirmations": 6
-    }
-  ]
-}
-```
+### `GET /api/payouts`
+
+Recent payout transactions.
 
 ### `GET /api/chart/hashrate`
 
-24-hour hashrate history (5-minute intervals).
-
-```json
-{
-  "points": [
-    { "time": 1718000000000, "hashrate": 120000000 },
-    { "time": 1718000300000, "hashrate": 125000000 }
-  ]
-}
-```
+24-hour hashrate history (5-minute intervals, 288 data points).
 
 ## Architecture
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Stratum     │     │  Share       │     │  Block       │
-│  Server      │────▶│  Manager     │────▶│  Scanner     │
-│  (TCP:3333)  │     │  (PPLNS)     │     │  (RPC poll)  │
+│  Stratum     │     │  PPLNS       │     │  Block       │
+│  Server      │────▶│  Engine      │────▶│  Scanner     │
+│  (TCP:3333)  │     │  (payouts)   │     │  (RPC poll)  │
 └──────────────┘     └──────┬───────┘     └──────┬───────┘
                             │                     │
                      ┌──────▼─────────────────────▼───────┐
-                     │          State Manager              │
-                     │  (shares, balances, blocks)         │
+                     │          Store (in-memory)          │
+                     │  miners, blocks, payouts, stats     │
                      └──────────────┬──────────────────────┘
                                     │
                      ┌──────────────▼──────────────────────┐
-                     │          HTTP API / Dashboard        │
+                     │          HTTP API + Dashboard        │
                      │          (HTTP:8080)                 │
                      └─────────────────────────────────────┘
 ```
-
-- **Stratum Server**: Handles miner connections, vardiff, share validation.
-- **Share Manager**: PPLNS window tracking, payout calculation.
-- **Block Scanner**: Polls the PRL node via RPC for new blocks.
-- **State Manager**: In-memory state with periodic persistence.
-- **HTTP API**: REST endpoints + serves the web dashboard.
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-thing`)
-3. Commit with clear messages
-4. Open a PR against `main`
-
-Keep it simple. No unnecessary dependencies. Match existing code style.
 
 ## License
 
