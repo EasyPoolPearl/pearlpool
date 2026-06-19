@@ -30,6 +30,7 @@ const crypto = require('crypto');
 const store = require('./store');
 const PPLNSEngine = require('./payout');
 const ChainScanner = require('./scanner');
+const { initDemoData } = require('./demo');
 
 // =============================================================================
 // Constants
@@ -77,6 +78,7 @@ function parseArgs() {
     rpcUrl: DEFAULT_RPC_URL,
     fee: DEFAULT_FEE,
     minPayout: DEFAULT_MIN_PAYOUT,
+    demo: true,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -110,6 +112,9 @@ function parseArgs() {
         case 'min-payout':
           config.minPayout = parseInt(value, 10);
           break;
+        case 'demo':
+          config.demo = value !== 'false' && value !== '0';
+          break;
         case 'help':
           printUsage();
           process.exit(0);
@@ -132,6 +137,7 @@ Options:
   --rpc-url <url>       PRL daemon RPC URL (default: ${DEFAULT_RPC_URL})
   --fee <fraction>      Base pool fee, e.g. 0.01 = 1% (default: ${DEFAULT_FEE})
   --min-payout <amt>    Minimum payout in atomic units (default: ${DEFAULT_MIN_PAYOUT})
+  --demo <bool>         Enable demo data seeder (default: true, set false to disable)
   --help                Show this help message
   `);
 }
@@ -984,6 +990,12 @@ function main() {
     baseFee: config.fee,
     minPayout: config.minPayout,
   });
+
+  // Initialize demo data — pre-seed store with realistic pool history
+  // In production this would be loaded from PostgreSQL/Redis
+  if (config.demo) {
+    initDemoData(store, payoutEngine, config.wallet);
+  }
 
   // Start Stratum TCP server
   const stratumServer = startStratumServer(config.port, payoutEngine);
