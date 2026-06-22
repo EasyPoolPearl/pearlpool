@@ -16,8 +16,8 @@ const http = require('http');
 const { URL } = require('url');
 const EventEmitter = require('events');
 
-/** Default RPC endpoint URL */
-const DEFAULT_RPC_URL = 'http://127.0.0.1:18555';
+/** Default RPC endpoint URL (matches the port documented in README.md). */
+const DEFAULT_RPC_URL = 'http://127.0.0.1:9933';
 
 /** Default poll interval in milliseconds */
 const DEFAULT_POLL_INTERVAL_MS = 1000;
@@ -33,7 +33,7 @@ const DEFAULT_RPC_TIMEOUT_MS = 5000;
 class ChainScanner extends EventEmitter {
   /**
    * @param {Object} [options]
-   * @param {string} [options.rpcUrl='http://127.0.0.1:18555'] - PRL RPC endpoint URL
+   * @param {string} [options.rpcUrl='http://127.0.0.1:9933'] - PRL RPC endpoint URL
    * @param {string} [options.rpcUser=''] - RPC username (for basic auth)
    * @param {string} [options.rpcPassword=''] - RPC password (for basic auth)
    * @param {number} [options.pollIntervalMs=1000] - Polling interval in milliseconds

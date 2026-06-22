@@ -177,7 +177,7 @@ function printBanner(config) {
 ║   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝      ╚═════╝  ╚═════╝ ╚══════╝    ╚═╝
 ║                                                          ║
 ║   PearlPool v${VERSION}  –  PRL Mining Pool                    ║
-║   PPLNS Payout  ·  Blake3 PoW                            ║
+║   PPLNS Payout  ·  SHA-256d PoW  ·  Experimental           ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝\x1b[0m
 `;
@@ -361,7 +361,7 @@ function handleStratumMessage(clientId, state, msg, payoutEngine) {
         // Use the actual share hash as the block hash
         const blockHash = state.lastShareHash
           ? state.lastShareHash.toString('hex')
-          : sha256d(Buffer.from(jobId + nonce, 'utf8')).toString('hex');
+          : hashHeader(Buffer.from(jobId + nonce, 'utf8')).toString('hex');
         const stats = store.getStats();
         const blockReward = store.getNetworkBlockReward() || 50_00000000; // fallback 50 PRL
 
@@ -421,8 +421,8 @@ function handleStratumMessage(clientId, state, msg, payoutEngine) {
 }
 
 /**
- * Validate a submitted share.
- * In production, this would reconstruct the block header and compute Blake3.
+ * Reconstruct and validate a block header from a miner-submitted share.
+ * Hash function is SHA-256d (see src/stratum.js for the rationale).
  *
  * @param {StratumClient} state
  * @param {string} jobId
@@ -455,12 +455,12 @@ function validateShare(state, jobId, extraNonce2, nTime, nonce) {
       Buffer.from(state.extraNonce1 + extraNonce2, 'hex'),
       Buffer.from(job.coinbase2, 'hex'),
     ]);
-    const coinbaseHash = sha256d(coinbase);
+    const coinbaseHash = hashHeader(coinbase);
 
     // Build merkle root
     let merkleRoot = coinbaseHash;
     for (const branch of (job.merkleBranches || [])) {
-      merkleRoot = sha256d(Buffer.concat([merkleRoot, Buffer.from(branch, 'hex')]));
+      merkleRoot = hashHeader(Buffer.concat([merkleRoot, Buffer.from(branch, 'hex')]));
     }
 
     // Reconstruct 80-byte block header
@@ -472,8 +472,8 @@ function validateShare(state, jobId, extraNonce2, nTime, nonce) {
     header.writeUInt32LE(parseInt(job.nbits, 16), 72);
     header.writeUInt32LE(parseInt(nonce, 16), 76);
 
-    // Double-SHA256 hash (production PRL uses Blake3 — swap hash function for mainnet)
-    const hashBuf = sha256d(header);
+    // SHA-256d hash the header and check against the share target.
+    const hashBuf = hashHeader(header);
     const hashBigInt = bufferToBigInt(hashBuf);
 
     // Check against share difficulty target
@@ -493,8 +493,8 @@ function validateShare(state, jobId, extraNonce2, nTime, nonce) {
   }
 }
 
-/** @returns {Buffer} Double-SHA256 hash */
-function sha256d(data) {
+/** Double-SHA256 hash of a block header (Bitcoin-style PoW). */
+function hashHeader(data) {
   return crypto.createHash('sha256').update(
     crypto.createHash('sha256').update(data).digest()
   ).digest();

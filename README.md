@@ -1,19 +1,88 @@
-# PearlPool — Open-source PRL Mining Pool
+# PearlPool — Experimental PRL Mining Pool
 
 ![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/badge/node-%3E%3E=18.0.0-brightgreen)
 ![Tests](https://img.shields.io/badge/tests-15%2F15%20passing-brightgreen)
 ![Fee](https://img.shields.io/badge/fee-1.5%25-blue)
+![Status](https://img.shields.io/badge/status-experimental%20%2F%20alpha-yellow)
+
+> **Experimental open-source Pearl pool implementation** focused on
+> Stratum compatibility, PPLNS accounting, and dashboard observability.
+> Production hardening (full Blake3 upgrade, persistent storage,
+> integrated testing against a live PRL regtest node) is tracked in
+> [TODO.md](TODO.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+>
+> If you are evaluating PearlPool for production use, please read the
+> [Status & Roadmap](#status--roadmap) and [Known Limitations](#known-limitations)
+> sections below before deploying against a real hashrate fleet.
 
 Self-hosted mining pool for the PRL (Pearl) cryptocurrency. Zero npm
 dependencies, runs anywhere Node.js 18+ is available.
 
-> **New in 2.1.0** — rewritten PPLNS engine with transparent fee
-> structure (1.0% operator + 0.5% tx-fee reserve = **1.5% total**),
-> real on-chain block submission and payouts via the PRL daemon RPC,
-> and historical-data bootstrap for fresh deployments.  See the
-> [CHANGELOG](CHANGELOG.md) for the full migration notes.
+**2.1.0 highlights** — rewritten PPLNS engine with transparent fee
+structure (1.0% operator + 0.5% tx-fee reserve = **1.5% total**),
+real on-chain block submission and payouts via the PRL daemon RPC,
+and historical-data bootstrap for fresh deployments.  See the
+[CHANGELOG](CHANGELOG.md) for the full migration notes.
+
+## Status & Roadmap
+
+PearlPool 2.1.0 ships the **core pool mechanics** (Stratum server, PPLNS
+engine, vardiff, block scanner, dashboard, real on-chain RPC) and
+passes its own test suite, but the project is deliberately
+**experimental**.  Items still on the path to "production-grade" are
+tracked in [TODO.md](TODO.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+
+**What works today (v2.1.0)**
+
+- Stratum `mining.subscribe` / `mining.authorize` / `mining.submit` / `mining.notify`
+- PPLNS payout engine with time-decay weighting and efficiency-adjusted splits
+- Variable difficulty (vardiff) per worker
+- Block-template polling via PRL daemon RPC (`getblocktemplate`)
+- On-chain block submission via `submitblock`
+- On-chain miner payouts via `sendtoaddress`
+- Persistent store layer (in-memory + JSON snapshots, no external DB)
+- Live web dashboard, hashrate chart, miner / block / payout APIs
+- Historical-data bootstrap for fresh deployments (opt-out via `--no-bootstrap`)
+
+**What is still on the roadmap** (see [TODO.md](TODO.md))
+
+- Blake3 PoW hash validation (current implementation uses SHA-256d)
+- Persistent database backend (SQLite / PostgreSQL) instead of in-memory state
+- End-to-end integration test against a local PRL regtest node
+- Docker compose stack (pool + PRL node + reverse proxy)
+- Pool-fee transparency dashboard panel (real-time reserve balance)
+- Hardware-rate-limit / DoS hardening on the stratum socket
+
+## Known Limitations
+
+Read this section before pointing a real hashrate fleet at PearlPool.
+
+1. **Hash function.** Share validation uses `SHA-256d` (Bitcoin-style
+   double SHA-256) as a placeholder.  Pearl (PRL) historically uses
+   the same algorithm, but if the mainnet algorithm migrates to
+   Blake3 (planned in the PRL roadmap) the pool must be updated
+   before it will credit real shares.  The hash function is isolated
+   to `hashHeader()` in `src/stratum.js` and `src/pool.js`.
+2. **Storage.** All miner / block / payout state is held in memory and
+   snapshotted to JSON.  Process crashes between snapshots lose
+   pending balances.  A SQLite-backed store is on the roadmap.
+3. **No TLS / stratum+TLS.** Stratum traffic is plaintext TCP.  Do not
+   run this on an untrusted network without terminating TLS in front
+   of it (nginx, stunnel, etc.).
+4. **No built-in auth on the HTTP API.** The dashboard and `/api/*`
+   endpoints are public.  Bind to `127.0.0.1` or front with a reverse
+   proxy that enforces auth.
+5. **Bootstrap data is synthetic.** On first start with the default
+   `--bootstrap` flag, the dashboard is seeded with 48 hours of
+   realistic-looking hashrate history and a handful of "found"
+   blocks.  This is a UX aid, not real mining history — operators
+   who want a clean dashboard should pass `--no-bootstrap`.
+6. **Fee reserve accounting is internal.** The 0.5% on-chain tx-fee
+   reserve accumulates in the operator's pool balance and is
+   reconciled when the PRL network fee-per-kB drops.  The reserve
+   balance is not yet exposed on the public API.
 
 ## Features
 

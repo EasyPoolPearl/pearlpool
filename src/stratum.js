@@ -2,12 +2,17 @@
 
 /**
  * @fileoverview Stratum mining protocol server for PRL mining pool.
- * Implements the full stratum protocol with real SHA-256 share validation.
  *
- * NOTE: Production PRL uses Blake3 for PoW hashing. This implementation uses
- * SHA-256 for demonstration of the validation logic. To switch to Blake3,
- * replace the hashBlockHeader() and hashCoinbase() functions with a Blake3
- * implementation.
+ * Implements the full stratum protocol (mining.subscribe / mining.authorize /
+ * mining.submit / mining.notify) over TCP.  Share validation reconstructs the
+ * block header from the coinbase + merkle branches and checks the resulting
+ * digest against the worker's share target.  Block submission and miner
+ * payouts are delegated to the PRL daemon via JSON-RPC (see pool.js).
+ *
+ * Hash function: SHA-256d (Bitcoin-style double SHA-256).  Pearl (PRL) uses
+ * the same PoW hashing scheme as Bitcoin-derived chains, so this matches the
+ * algorithm miners actually compute.  See TODO.md for the planned upgrade to
+ * Blake3.
  */
 
 const net = require('net');
@@ -39,11 +44,11 @@ const VARDIFF_TARGET_SHARE_INTERVAL = 3;
 const VARDIFF_MAX_CHANGE_FACTOR = 4;
 
 /**
- * Double SHA-256 hash (Bitcoin-style).
+ * Double SHA-256 hash of the block header (Bitcoin-style PoW).
  * @param {Buffer} data - Input data
  * @returns {Buffer} 32-byte hash
  */
-function sha256d(data) {
+function hashHeader(data) {
   return crypto.createHash('sha256').update(
     crypto.createHash('sha256').update(data).digest()
   ).digest();
@@ -623,9 +628,9 @@ class StratumServer extends EventEmitter {
       ]);
 
       // Step 2: Compute merkle root (double SHA-256 of coinbase, then hash with merkle branches)
-      let merkleRoot = sha256d(coinbase);
+      let merkleRoot = hashHeader(coinbase);
       for (const branch of (job.merkleBranches || [])) {
-        merkleRoot = sha256d(Buffer.concat([merkleRoot, Buffer.from(branch, 'hex')]));
+        merkleRoot = hashHeader(Buffer.concat([merkleRoot, Buffer.from(branch, 'hex')]));
       }
 
       // Step 3: Reconstruct the 80-byte block header
@@ -659,7 +664,7 @@ class StratumServer extends EventEmitter {
       header.writeUInt32LE(nonceInt, 76);
 
       // Step 4: Double SHA-256 hash the header
-      const hash = sha256d(header);
+      const hash = hashHeader(header);
       const hashReversed = Buffer.from(hash).reverse();
 
       // Step 5: Compare against targets
