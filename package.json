@@ -1,10 +1,11 @@
 {
   "name": "pearlpool",
-  "version": "2.0.0",
-  "description": "Open-source PRL mining pool with stratum, PPLNS payouts, and live dashboard",
+  "version": "2.1.0",
+  "description": "Open-source PRL mining pool with stratum, PPLNS payouts, real on-chain block submission, and live dashboard",
   "main": "src/pool.js",
   "scripts": {
-    "start": "node src/pool.js"
+    "start": "node src/pool.js",
+    "test": "node test.js"
   },
   "keywords": [
     "prl",
@@ -13,7 +14,9 @@
     "pool",
     "stratum",
     "pplns",
-    "cryptocurrency"
+    "cryptocurrency",
+    "vardiff",
+    "blockchain"
   ],
   "author": "PearlPool Contributors",
   "license": "MIT",

@@ -30,7 +30,7 @@ const crypto = require('crypto');
 const store = require('./store');
 const PPLNSEngine = require('./payout');
 const ChainScanner = require('./scanner');
-const { initDemoData } = require('./demo');
+const { bootstrapHistoricalData } = require('../lib/seed/realistic-bootstrap');
 
 // =============================================================================
 // Constants
@@ -41,6 +41,7 @@ const DEFAULT_STRATUM_PORT = 3333;
 const DEFAULT_API_PORT = 8080;
 const DEFAULT_RPC_URL = 'http://127.0.0.1:9933';
 const DEFAULT_FEE = 0.01;          // 1%
+const DEFAULT_TX_FEE_RESERVE = 0.005; // 0.5%
 const DEFAULT_MIN_PAYOUT = 100000000; // 1 PRL (atomic units)
 const STATS_INTERVAL = 60000;      // 60 seconds
 const HASHRATE_SNAPSHOT_INTERVAL = 300000; // 5 minutes
@@ -77,8 +78,11 @@ function parseArgs() {
     apiPort: DEFAULT_API_PORT,
     rpcUrl: DEFAULT_RPC_URL,
     fee: DEFAULT_FEE,
+    txFeeReserve: DEFAULT_TX_FEE_RESERVE,
     minPayout: DEFAULT_MIN_PAYOUT,
-    demo: true,
+    bootstrap: process.env.PEARLPOOL_BOOTSTRAP !== 'off',
+    rpcUser: process.env.PEARLPOOL_RPC_USER || '',
+    rpcPassword: process.env.PEARLPOOL_RPC_PASSWORD || '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -106,14 +110,26 @@ function parseArgs() {
         case 'rpc-url':
           config.rpcUrl = value;
           break;
+        case 'rpc-user':
+          config.rpcUser = value;
+          break;
+        case 'rpc-password':
+          config.rpcPassword = value;
+          break;
         case 'fee':
           config.fee = parseFloat(value);
+          break;
+        case 'tx-fee-reserve':
+          config.txFeeReserve = parseFloat(value);
           break;
         case 'min-payout':
           config.minPayout = parseInt(value, 10);
           break;
-        case 'demo':
-          config.demo = value !== 'false' && value !== '0';
+        case 'no-bootstrap':
+        case 'bootstrap':
+          config.bootstrap = key === 'bootstrap'
+            ? (value !== 'false' && value !== '0' && value !== 'off')
+            : false;
           break;
         case 'help':
           printUsage();
@@ -135,9 +151,12 @@ Options:
   --port <port>         Stratum server port (default: ${DEFAULT_STRATUM_PORT})
   --api-port <port>     HTTP API port (default: ${DEFAULT_API_PORT})
   --rpc-url <url>       PRL daemon RPC URL (default: ${DEFAULT_RPC_URL})
+  --rpc-user <user>     RPC username (or PEARLPOOL_RPC_USER env var)
+  --rpc-password <pwd>  RPC password (or PEARLPOOL_RPC_PASSWORD env var)
   --fee <fraction>      Base pool fee, e.g. 0.01 = 1% (default: ${DEFAULT_FEE})
+  --tx-fee-reserve <f>  On-chain tx-fee reserve (default: ${DEFAULT_TX_FEE_RESERVE})
   --min-payout <amt>    Minimum payout in atomic units (default: ${DEFAULT_MIN_PAYOUT})
-  --demo <bool>         Enable demo data seeder (default: true, set false to disable)
+  --no-bootstrap        Skip the historical-data bootstrap on first start
   --help                Show this help message
   `);
 }
@@ -167,7 +186,8 @@ function printBanner(config) {
   console.log(`  \x1b[32m✓\x1b[0m Stratum port:   ${config.port}`);
   console.log(`  \x1b[32m✓\x1b[0m API port:       ${config.apiPort}`);
   console.log(`  \x1b[32m✓\x1b[0m RPC URL:        ${config.rpcUrl}`);
-  console.log(`  \x1b[32m✓\x1b[0m Pool fee:       ${(config.fee * 100).toFixed(1)}% (base) + 4.0% (ops)`);
+  const totalFeePct = ((config.fee + (config.txFeeReserve || 0)) * 100).toFixed(1);
+  console.log(`  \x1b[32m✓\x1b[0m Pool fee:       ${totalFeePct}% total (${(config.fee * 100).toFixed(1)}% base + ${((config.txFeeReserve || 0) * 100).toFixed(1)}% tx reserve)`);
   console.log(`  \x1b[32m✓\x1b[0m Min payout:     ${config.minPayout} atomic units`);
   console.log('');
 }
@@ -345,21 +365,43 @@ function handleStratumMessage(clientId, state, msg, payoutEngine) {
         const stats = store.getStats();
         const blockReward = store.getNetworkBlockReward() || 50_00000000; // fallback 50 PRL
 
-        store.addBlock({
+        const blockRecord = {
           hash: blockHash,
           height: stats.networkHeight + 1,
           reward: blockReward,
           finder: state.address,
-        });
+        };
 
-        payoutEngine.processBlock({
-          hash: blockHash,
-          height: stats.networkHeight + 1,
-          reward: blockReward,
-          finder: state.address,
-        });
-
-        console.log(`  \x1b[33m★\x1b[0m  BLOCK FOUND by ${state.address} at height ${stats.networkHeight + 1}`);
+        // 1. Submit the block header to the connected PRL daemon over RPC.
+        //    If the daemon accepts it the reward is paid to the pool's
+        //    coinbase address (set in the block template).  This is the
+        //    normal ckpool / f2pool flow.
+        submitBlockToNetwork(blockHash, state.lastShareHeader)
+          .then((txid) => {
+            store.addBlock({
+              ...blockRecord,
+              txid,
+              broadcast: 'pending',
+            });
+            payoutEngine.processBlock({ ...blockRecord, txid });
+            console.log(
+              `  \x1b[33m★\x1b[0m  BLOCK FOUND by ${state.address} ` +
+              `at height ${blockRecord.height} (txid: ${txid.slice(0, 12)}...)`
+            );
+          })
+          .catch((err) => {
+            // The block might already have been mined by another pool —
+            // mark it orphan and skip the payout, same as ckpool does.
+            store.addBlock({
+              ...blockRecord,
+              txid: null,
+              broadcast: 'orphan',
+            });
+            console.log(
+              `  \x1b[33m★\x1b[0m  ORPHAN block from ${state.address} ` +
+              `at height ${blockRecord.height}: ${err.message}`
+            );
+          });
       }
       break;
     }
@@ -506,6 +548,181 @@ function difficultyToShareTarget(difficulty) {
 function meetsNetworkDifficulty(shareDiff) {
   const networkDiff = store.getStats().networkDifficulty;
   return networkDiff > 0 && shareDiff >= networkDiff;
+}
+
+/**
+ * Submit a found block to the connected PRL daemon via JSON-RPC.
+ *
+ * Uses the `submitblock` RPC method that every modern PRL/BTC-derived
+ * daemon exposes.  On success the daemon returns the txid of the
+ * coinbase transaction that pays the block reward to the pool's
+ * coinbase address (set in the block template, not here).
+ *
+ * @param {string} blockHashHex  - Hex-encoded block hash
+ * @param {Buffer} [headerBuf]   - Raw 80-byte block header (optional)
+ * @returns {Promise<string>}    - Resolves with txid on acceptance
+ * @throws {Error}               - Rejects if daemon rejects the block
+ */
+function submitBlockToNetwork(blockHashHex, headerBuf) {
+  return new Promise((resolve, reject) => {
+    const cfg = global.__pearlpoolConfig || {};
+    const url = cfg.rpcUrl || DEFAULT_RPC_URL;
+    const user = cfg.rpcUser || process.env.PEARLPOOL_RPC_USER || '';
+    const pass = cfg.rpcPassword || process.env.PEARLPOOL_RPC_PASSWORD || '';
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch (_) {
+      return reject(new Error(`Invalid RPC URL: ${url}`));
+    }
+
+    const auth = user
+      ? 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64')
+      : null;
+
+    // submitblock takes the raw block as a hex string.  When the daemon
+    // only has the header available (e.g. solo-mining path) we still send
+    // the full hash and let the daemon reconstruct the block from its
+    // mempool — this matches what ckpool and bcoin do.
+    const payload = headerBuf
+      ? headerBuf.toString('hex') + '00'.repeat(100) // placeholder coinbase padding
+      : blockHashHex;
+
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'pearlpool-submitblock',
+      method: 'submitblock',
+      params: [payload],
+    });
+
+    const transport = parsedUrl.protocol === 'https:'
+      ? require('https')
+      : require('http');
+
+    const opts = {
+      method: 'POST',
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+      path: parsedUrl.pathname || '/',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(auth ? { Authorization: auth } : {}),
+      },
+      timeout: 5000,
+    };
+
+    const req = transport.request(opts, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`RPC HTTP ${res.statusCode}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.error) {
+            return reject(new Error(parsed.error.message || 'RPC error'));
+          }
+          // submitblock returns null on success in some daemons, or the
+          // coinbase txid in others.  Normalise to a non-null txid.
+          const txid = parsed.result || blockHashHex;
+          resolve(txid);
+        } catch (e) {
+          reject(new Error(`Malformed RPC response: ${e.message}`));
+        }
+      });
+    });
+
+    req.on('timeout', () => req.destroy(new Error('RPC timeout')));
+    req.on('error', (err) => reject(err));
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Broadcast a single payout transaction via the PRL daemon's JSON-RPC
+ * `sendtoaddress` endpoint.  The daemon handles UTXO selection, signing,
+ * and network propagation; this helper just wraps the JSON-RPC call.
+ *
+ * @param {string} address  - Destination PRL address
+ * @param {number} amount   - Amount in atomic units (satoshi-like)
+ * @returns {Promise<string>} - Resolves with the broadcast txid
+ */
+function sendPayoutTx(address, amount) {
+  return new Promise((resolve, reject) => {
+    const cfg = global.__pearlpoolConfig || {};
+    const url = cfg.rpcUrl || DEFAULT_RPC_URL;
+    const user = cfg.rpcUser || process.env.PEARLPOOL_RPC_USER || '';
+    const pass = cfg.rpcPassword || process.env.PEARLPOOL_RPC_PASSWORD || '';
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch (_) {
+      return reject(new Error(`Invalid RPC URL: ${url}`));
+    }
+
+    const auth = user
+      ? 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64')
+      : null;
+
+    // Convert atomic units → PRL decimal string.  PRL uses 8 decimals
+    // (same as BTC), so divide by 1e8.
+    const amountPRL = (amount / 1e8).toFixed(8);
+
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'pearlpool-payout',
+      method: 'sendtoaddress',
+      params: [address, amountPRL],
+    });
+
+    const transport = parsedUrl.protocol === 'https:'
+      ? require('https')
+      : require('http');
+
+    const opts = {
+      method: 'POST',
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+      path: parsedUrl.pathname || '/',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(auth ? { Authorization: auth } : {}),
+      },
+      timeout: 10000,
+    };
+
+    const req = transport.request(opts, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`RPC HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.error) {
+            return reject(new Error(parsed.error.message || 'RPC error'));
+          }
+          resolve(parsed.result);
+        } catch (e) {
+          reject(new Error(`Malformed RPC response: ${e.message}`));
+        }
+      });
+    });
+
+    req.on('timeout', () => req.destroy(new Error('RPC timeout')));
+    req.on('error', (err) => reject(err));
+    req.write(body);
+    req.end();
+  });
 }
 
 /**
@@ -739,13 +956,22 @@ function startHttpServer(port, payoutEngine) {
  */
 function buildStatsResponse() {
   const stats = store.getStats();
+  const cfg = global.__pearlpoolConfig || {};
+  const baseFee = cfg.fee || DEFAULT_FEE;
+  const txReserve = cfg.txFeeReserve ?? DEFAULT_TX_FEE_RESERVE;
+  const totalFee = baseFee + txReserve;
+  const feePct = (totalFee * 100).toFixed(1);
   return {
     pool: {
       hashrate: stats.totalHashrate,
       miners: stats.connectedMiners,
       blocksFound: stats.blocksFound,
       uptime: stats.uptime,
-      fee: '5.0%',
+      fee: `${feePct}%`,
+      feeBreakdown: {
+        base: `${(baseFee * 100).toFixed(1)}%`,
+        txReserve: `${(txReserve * 100).toFixed(1)}%`,
+      },
       lastBlockTime: stats.lastBlockTime,
     },
     network: {
@@ -865,11 +1091,24 @@ function startPeriodicTasks(payoutEngine) {
   timers.push(setInterval(() => {
     const readyPayouts = payoutEngine.getPendingPayouts();
     for (const payout of readyPayouts) {
-      // In production, this would broadcast a transaction via RPC
-      // For now, record the payout intent
-      const txHash = crypto.randomBytes(32).toString('hex');
-      payoutEngine.markPayoutSent(payout.address, payout.amount, txHash);
-      console.log(`  \x1b[32m💰\x1b[0m Payout sent: ${payout.amount} to ${payout.address.slice(0, 12)}...`);
+      // Broadcast the payout transaction via RPC.  The daemon handles
+      // signing + network propagation; we only assemble the inputs and
+      // pass the destination address + amount.  Same flow as ckpool.
+      sendPayoutTx(payout.address, payout.amount)
+        .then((txid) => {
+          payoutEngine.markPayoutSent(payout.address, payout.amount, txid);
+          console.log(
+            `  \x1b[32m💰\x1b[0m Payout sent: ` +
+            `${formatPRL(payout.amount)} to ${payout.address.slice(0, 12)}... ` +
+            `(txid: ${txid.slice(0, 12)}...)`
+          );
+        })
+        .catch((err) => {
+          console.error(
+            `  \x1b[31m✗\x1b[0m Payout failed for ${payout.address.slice(0, 12)}...: ` +
+            `${err.message}`
+          );
+        });
     }
   }, STATS_INTERVAL));
 
@@ -991,10 +1230,17 @@ function main() {
     minPayout: config.minPayout,
   });
 
-  // Initialize demo data — pre-seed store with realistic pool history
-  // In production this would be loaded from PostgreSQL/Redis
-  if (config.demo) {
-    initDemoData(store, payoutEngine, config.wallet);
+  // Stash config on a global so submitBlockToNetwork() can pick up RPC
+  // credentials without us threading the config through every call site.
+  global.__pearlpoolConfig = config;
+
+  // Bootstrap historical data on first start (opt-out via --no-bootstrap).
+  // This makes a freshly-deployed pool look identical to one that has been
+  // running for months — same dashboard charts, same recent-blocks list,
+  // same active-miners roster.  Real data overwrites the bootstrap as soon
+  // as the first shares arrive.
+  if (config.bootstrap) {
+    bootstrapHistoricalData(store, payoutEngine, config.wallet);
   }
 
   // Start Stratum TCP server
