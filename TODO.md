@@ -29,7 +29,12 @@ for the long-form version with rationale and design notes.
 - [ ] **Persistent database backend.**  Replace the in-memory `Store`
       with a SQLite (or PostgreSQL) backend so process restarts do
       not lose pending balances.  Required before pointing real
-      hashrate at the pool.
+      hashrate at the pool.  A thin **JSON snapshot** layer
+      (`lib/persistence/json-snapshot.js`, used by
+      `store.persist` / `store.restoreFromFile` and called every 60 s
+      + on clean shutdown) is now in place as the basis for this swap;
+      see [Production Safety Notes](README.md#production-safety-notes)
+      for the gap it does and does not cover.
 - [ ] **Pool-fee transparency dashboard panel.**  Expose the operator
       reserve balance, the per-block fee breakdown, and the
       cumulative reserve drawdown on a public `/api/fee-stats` endpoint

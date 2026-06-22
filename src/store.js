@@ -440,6 +440,95 @@ class PoolStore extends EventEmitter {
 
     this.emit('share', { address, accepted, difficulty });
   }
+
+  // ---------------------------------------------------------------------------
+  // Snapshot / persistence (JSON file, atomic write, zero deps)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Serialise the entire store state to a plain JSON-safe object.
+   * EventEmitter internals are not included (they live on the prototype).
+   *
+   * @returns {object} snapshot
+   */
+  serialize() {
+    return {
+      version: 1,
+      savedAt: Date.now(),
+      miners: Array.from(this.miners.entries()),
+      blocks: this.blocks,
+      pendingPayouts: Array.from(this.pendingPayouts.entries()),
+      stats: { ...this.stats },
+      hashrateHistory: this.hashrateHistory,
+      payoutHistory: this.payoutHistory,
+    };
+  }
+
+  /**
+   * Replace store state from a previously-serialised snapshot.
+   * Resets `uptime` to `Date.now()` so a restored pool reports zero
+   * elapsed time (avoids negative / stale uptime from the snapshot).
+   *
+   * @param {object} snapshot - The object previously returned by serialize()
+   * @returns {boolean} true if state was replaced, false if snapshot was null
+   * @throws {Error} on version mismatch or invalid shape
+   */
+  restore(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    if (snapshot.version !== 1) {
+      throw new Error(
+        `Unsupported snapshot version: ${snapshot.version}. ` +
+        `This build of PearlPool understands version 1.`
+      );
+    }
+
+    this.miners = new Map(Array.isArray(snapshot.miners) ? snapshot.miners : []);
+    this.blocks = Array.isArray(snapshot.blocks) ? snapshot.blocks : [];
+    this.pendingPayouts = new Map(
+      Array.isArray(snapshot.pendingPayouts) ? snapshot.pendingPayouts : []
+    );
+    if (snapshot.stats && typeof snapshot.stats === 'object') {
+      this.stats = { ...this.stats, ...snapshot.stats, uptime: Date.now() };
+    }
+    this.hashrateHistory = Array.isArray(snapshot.hashrateHistory)
+      ? snapshot.hashrateHistory
+      : [];
+    this.payoutHistory = Array.isArray(snapshot.payoutHistory)
+      ? snapshot.payoutHistory
+      : [];
+
+    this._recalcPoolHashrate();
+    this.emit('restored', { savedAt: snapshot.savedAt });
+    return true;
+  }
+
+  /**
+   * Atomically write the current store state to a JSON file.
+   * See `lib/persistence/json-snapshot.js` for the write semantics
+   * (write to `.tmp`, fsync, rename).
+   *
+   * @param {string} filepath - Target file (e.g. `./data/state.json`)
+   * @returns {Promise<void>}
+   */
+  async persist(filepath) {
+    const { save } = require('../lib/persistence/json-snapshot');
+    return save(filepath, this.serialize());
+  }
+
+  /**
+   * Load and apply a snapshot from disk.  Returns `false` if the file
+   * does not exist (first start).  Throws on parse / version errors so
+   * the caller can log + refuse to start, or fall back to a fresh store.
+   *
+   * @param {string} filepath
+   * @returns {Promise<boolean>} true if state was restored, false on first start
+   */
+  async restoreFromFile(filepath) {
+    const { load } = require('../lib/persistence/json-snapshot');
+    const snapshot = await load(filepath);
+    if (snapshot === null) return false;
+    return this.restore(snapshot);
+  }
 }
 
 // Create and export a singleton instance

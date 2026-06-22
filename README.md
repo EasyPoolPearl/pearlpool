@@ -1,5 +1,14 @@
 # PearlPool — Experimental PRL Mining Pool
 
+> ⚠️ **Community project** — PearlPool is an independent, open-source
+> mining-pool implementation for the Pearl (PRL) network.  It is **not
+> affiliated with, endorsed by, sponsored by, or maintained by Pearl
+> Research Labs** (the upstream team behind the official Pearl core
+> monorepo at
+> [pearl-research-labs/pearl](https://github.com/pearl-research-labs/pearl)).
+> PearlPool is a hobby/portfolio project.  No official endorsement is
+> implied.  For the canonical Pearl protocol, see the upstream repo.
+
 ![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/badge/node-%3E%3E=18.0.0-brightgreen)
@@ -9,13 +18,14 @@
 
 > **Experimental open-source Pearl pool implementation** focused on
 > Stratum compatibility, PPLNS accounting, and dashboard observability.
-> Production hardening (full Blake3 upgrade, persistent storage,
+> Production hardening (full Blake3 upgrade, full database backend,
 > integrated testing against a live PRL regtest node) is tracked in
 > [TODO.md](TODO.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 >
 > If you are evaluating PearlPool for production use, please read the
-> [Status & Roadmap](#status--roadmap) and [Known Limitations](#known-limitations)
-> sections below before deploying against a real hashrate fleet.
+> [Status & Roadmap](#status--roadmap), [Known Limitations](#known-limitations),
+> and [Production Safety Notes](#production-safety-notes) sections below
+> before deploying against a real hashrate fleet.
 
 Self-hosted mining pool for the PRL (Pearl) cryptocurrency. Zero npm
 dependencies, runs anywhere Node.js 18+ is available.
@@ -28,11 +38,27 @@ and historical-data bootstrap for fresh deployments.  See the
 
 ## Status & Roadmap
 
+> **PearlPool is an experimental community pool implementation for PRL.**
+> **It is not affiliated with Pearl Research Labs.**
+
 PearlPool 2.1.0 ships the **core pool mechanics** (Stratum server, PPLNS
 engine, vardiff, block scanner, dashboard, real on-chain RPC) and
 passes its own test suite, but the project is deliberately
 **experimental**.  Items still on the path to "production-grade" are
 tracked in [TODO.md](TODO.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+
+**Current status**
+
+| Subsystem                | Status                | Notes                                                    |
+|--------------------------|-----------------------|----------------------------------------------------------|
+| Stratum server           | working prototype     | `subscribe` / `authorize` / `submit` / `notify`          |
+| Vardiff                  | implemented           | targets 1 share / 3 s per worker                         |
+| PPLNS accounting         | tested                | time-decay + efficiency-adjusted splits                  |
+| Block scanner            | implemented           | orphan rate + network hashrate EMA                       |
+| PRL daemon RPC           | experimental          | `submitblock` + `sendtoaddress` w/ retry & fallback     |
+| Persistent store         | **JSON snapshot**     | atomic write to `data/state.json` every 60 s + on stop  |
+| Dashboard                | working               | vanilla JS, no client framework, ~30 kB                 |
+| Production use           | not recommended       | see [Known Limitations](#known-limitations) below        |
 
 **What works today (v2.1.0)**
 
@@ -83,6 +109,45 @@ Read this section before pointing a real hashrate fleet at PearlPool.
    reserve accumulates in the operator's pool balance and is
    reconciled when the PRL network fee-per-kB drops.  The reserve
    balance is not yet exposed on the public API.
+
+## Production Safety Notes
+
+PearlPool is a hobby/portfolio project and ships with a handful of
+"developer-friendly" defaults.  Read this section before exposing it
+to a real hashrate fleet.
+
+1. **Persistence is a JSON snapshot, not a database.** PearlPool
+   serialises miners / blocks / payouts / hashrate history to
+   `data/state.json` (atomic write — see `lib/persistence/json-snapshot.js`)
+   every 60 seconds and on clean shutdown.  This is enough to survive
+   a clean restart, but it is **not** a substitute for a proper
+   database: a process crash between snapshots can lose pending
+   balances.  A SQLite-backed store is on the roadmap
+   ([TODO.md](TODO.md)).  If you are operating a pool with real
+   hashrate, take regular backups of `data/state.json`.
+
+2. **Bootstrap data is synthetic.** On first start with the default
+   `--bootstrap` flag, the dashboard is seeded with 48 hours of
+   realistic-looking hashrate history and a handful of "found"
+   blocks.  This is a **UX aid**, not real mining history — it is
+   derived from public PRL chain data (see
+   [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md)) but is not a record of
+   actual mining activity.  Operators who want a clean dashboard
+   should pass `--no-bootstrap` or set `PEARLPOOL_BOOTSTRAP=off`.
+
+3. **Stratum and the HTTP API are plaintext.** This is a hobby
+   project.  No TLS, no auth on `/api/*`.  Bind the HTTP API to
+   `127.0.0.1` and front both ports with a reverse proxy
+   (nginx / Caddy / stunnel) before exposing them to the internet.
+
+4. **No DoS protection on the stratum socket.** A single misbehaving
+   client can fill the in-memory share queue.  For public deployment,
+   rate-limit at the network layer.
+
+5. **This is not the official Pearl pool.** PearlPool is community
+   software (see the disclaimer at the top of this file).  For the
+   official Pearl reference implementation see
+   [pearl-research-labs/pearl](https://github.com/pearl-research-labs/pearl).
 
 ## Features
 
@@ -140,6 +205,7 @@ the 1.5% operator fee from every block.  See
 | `--min-payout`       | `100000000`              | Minimum payout in atomic units (1.0 PRL) |
 | `--payout-interval`  | `3600`                   | Seconds between payout cycles |
 | `--no-bootstrap`     | `false`                  | Skip the historical data bootstrap on first start |
+| `--data-dir`         | `./data`                 | Directory for `state.json` snapshots |
 
 Example:
 
@@ -151,7 +217,8 @@ node src/pool.js \
   --rpc-url http://node.example.com:9933 \
   --fee 0.01 \
   --tx-fee-reserve 0.005 \
-  --min-payout 100000000
+  --min-payout 100000000 \
+  --data-dir /var/lib/pearlpool
 ```
 
 The same flags can be passed as environment variables:
@@ -285,6 +352,15 @@ Full architecture overview with data-flow diagrams:
   calculation with worked examples.
 - [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) — what the historical-data
   bootstrap does and how to disable it.
+- [docs/RPC_SETUP.md](docs/RPC_SETUP.md) — connecting PearlPool to a
+  PRL daemon, sample RPC config, retry / error handling.
+- [docs/SAMPLE_OUTPUT.md](docs/SAMPLE_OUTPUT.md) — sample JSON
+  responses from `/api/stats`, `/api/blocks`, `/api/miner/:addr`.
+- [docs/BLOCK_LIFECYCLE.md](docs/BLOCK_LIFECYCLE.md) — end-to-end
+  example of one block: share received → block found → on-chain
+  submit → confirm → payout tx.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — long-form rationale and
+  decision log for the experimental → production trajectory.
 - [CHANGELOG.md](CHANGELOG.md) — release notes and migration guides.
 - [SECURITY.md](SECURITY.md) — threat model and how to report a
   vulnerability.
@@ -300,7 +376,9 @@ node test.js
 Expected output: `Results: 15 passed, 0 failed`.
 
 The test suite is a single file with no dependencies — it exercises
-the PPLNS engine, the bootstrap module, and the dust-rounding logic.
+the PPLNS engine, the bootstrap module, the dust-rounding logic, and
+the JSON snapshot persistence layer (`store.serialize`,
+`store.persist`, `store.restoreFromFile`).
 
 ## License
 

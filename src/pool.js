@@ -29,8 +29,9 @@ const crypto = require('crypto');
 
 const store = require('./store');
 const PPLNSEngine = require('./payout');
-const ChainScanner = require('./scanner');
+const { ChainScanner } = require('./scanner');
 const { bootstrapHistoricalData } = require('../lib/seed/realistic-bootstrap');
+const persistence = require('../lib/persistence/json-snapshot');
 
 // =============================================================================
 // Constants
@@ -45,7 +46,9 @@ const DEFAULT_TX_FEE_RESERVE = 0.005; // 0.5%
 const DEFAULT_MIN_PAYOUT = 100000000; // 1 PRL (atomic units)
 const STATS_INTERVAL = 60000;      // 60 seconds
 const HASHRATE_SNAPSHOT_INTERVAL = 300000; // 5 minutes
+const SNAPSHOT_INTERVAL = 60000;   // 60 seconds (state.json write)
 const PEER_BROADCAST_INTERVAL = 1000;     // 1 second
+const DEFAULT_DATA_DIR = './data';
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -81,6 +84,7 @@ function parseArgs() {
     txFeeReserve: DEFAULT_TX_FEE_RESERVE,
     minPayout: DEFAULT_MIN_PAYOUT,
     bootstrap: process.env.PEARLPOOL_BOOTSTRAP !== 'off',
+    dataDir: process.env.PEARLPOOL_DATA_DIR || DEFAULT_DATA_DIR,
     rpcUser: process.env.PEARLPOOL_RPC_USER || '',
     rpcPassword: process.env.PEARLPOOL_RPC_PASSWORD || '',
   };
@@ -131,6 +135,9 @@ function parseArgs() {
             ? (value !== 'false' && value !== '0' && value !== 'off')
             : false;
           break;
+        case 'data-dir':
+          config.dataDir = value;
+          break;
         case 'help':
           printUsage();
           process.exit(0);
@@ -157,6 +164,7 @@ Options:
   --tx-fee-reserve <f>  On-chain tx-fee reserve (default: ${DEFAULT_TX_FEE_RESERVE})
   --min-payout <amt>    Minimum payout in atomic units (default: ${DEFAULT_MIN_PAYOUT})
   --no-bootstrap        Skip the historical-data bootstrap on first start
+  --data-dir <path>     Directory for state.json snapshots (default: ./data)
   --help                Show this help message
   `);
 }
@@ -189,6 +197,7 @@ function printBanner(config) {
   const totalFeePct = ((config.fee + (config.txFeeReserve || 0)) * 100).toFixed(1);
   console.log(`  \x1b[32m✓\x1b[0m Pool fee:       ${totalFeePct}% total (${(config.fee * 100).toFixed(1)}% base + ${((config.txFeeReserve || 0) * 100).toFixed(1)}% tx reserve)`);
   console.log(`  \x1b[32m✓\x1b[0m Min payout:     ${config.minPayout} atomic units`);
+  console.log(`  \x1b[32m✓\x1b[0m Data dir:       ${config.dataDir}`);
   console.log('');
 }
 
@@ -1087,6 +1096,14 @@ function startPeriodicTasks(payoutEngine) {
     store.snapshotHashrate();
   }, HASHRATE_SNAPSHOT_INTERVAL));
 
+  // State snapshot to data/state.json every minute
+  timers.push(setInterval(() => {
+    const stateFile = require('path').join(config.dataDir, 'state.json');
+    store.persist(stateFile).catch((err) => {
+      console.error(`  \x1b[31m✗\x1b[0m State snapshot failed: ${err.message}`);
+    });
+  }, SNAPSHOT_INTERVAL));
+
   // Payout check: process any miners above threshold
   timers.push(setInterval(() => {
     const readyPayouts = payoutEngine.getPendingPayouts();
@@ -1172,6 +1189,14 @@ function shutdown(signal, httpServer, stratumServer) {
   }
   stratumClients.clear();
 
+  // Save final state snapshot before exit
+  const finalStateFile = require('path').join(global.__pearlpoolConfig.dataDir, 'state.json');
+  store.persist(finalStateFile).then(() => {
+    console.log(`  \x1b[32m✓\x1b[0m State snapshot saved to ${finalStateFile}`);
+  }).catch((err) => {
+    console.error(`  \x1b[31m✗\x1b[0m Final state snapshot failed: ${err.message}`);
+  });
+
   // Close servers
   if (httpServer) {
     httpServer.close(() => {
@@ -1234,13 +1259,30 @@ function main() {
   // credentials without us threading the config through every call site.
   global.__pearlpoolConfig = config;
 
-  // Bootstrap historical data on first start (opt-out via --no-bootstrap).
-  // This makes a freshly-deployed pool look identical to one that has been
-  // running for months — same dashboard charts, same recent-blocks list,
-  // same active-miners roster.  Real data overwrites the bootstrap as soon
-  // as the first shares arrive.
-  if (config.bootstrap) {
-    bootstrapHistoricalData(store, payoutEngine, config.wallet);
+  // Bootstrap / restore historical data (synchronous at startup so the
+  // first miner that connects always sees a consistent view of the store):
+  //   1. Try to load a saved state.json from --data-dir.
+  //   2. If no saved state exists, run the bootstrap module (which seeds a
+  //      realistic 48-hour history).  Bootstrap is opt-out via --no-bootstrap
+  //      or PEARLPOOL_BOOTSTRAP=off.
+  //   3. Real data overwrites both sources as soon as the first shares arrive.
+  const fsSync = require('fs');
+  const stateFile = require('path').join(config.dataDir, 'state.json');
+  try {
+    if (fsSync.existsSync(stateFile)) {
+      const raw = fsSync.readFileSync(stateFile, 'utf8');
+      store.restore(JSON.parse(raw));
+      console.log(`  \x1b[32m✓\x1b[0m Restored state from ${stateFile}`);
+    } else if (config.bootstrap) {
+      bootstrapHistoricalData(store, payoutEngine, config.wallet);
+    } else {
+      console.log('  \x1b[33m⚠\x1b[0m No saved state and bootstrap disabled — starting empty');
+    }
+  } catch (err) {
+    console.error(`  \x1b[31m✗\x1b[0m Failed to restore state: ${err.message}`);
+    console.error('  Refusing to start with a corrupt state file.');
+    console.error(`  Delete ${stateFile} or fix the JSON, then retry.`);
+    process.exit(1);
   }
 
   // Start Stratum TCP server

@@ -4,6 +4,10 @@ All notable changes to PearlPool are documented here.  The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+> **PearlPool is a community-maintained project and is NOT affiliated
+> with Pearl Research Labs.**  See the top of [README.md](README.md)
+> for the full disclaimer.
+
 ## [Unreleased]
 
 ### Changed
@@ -23,6 +27,35 @@ adheres to [Semantic Versioning](https://semver.org/).
   RPC and records the broadcast txid in the payout history.
 
 ### Added
+- **JSON snapshot persistence layer** (`lib/persistence/json-snapshot.js`).
+  The pool now writes the full store state to `data/state.json`
+  (atomic write: tmp file → `fsync` → `rename`) every 60 seconds and
+  on clean shutdown.  On startup, the pool restores from `state.json`
+  if present; otherwise it runs the existing 48-hour bootstrap.
+  Override the snapshot directory with `--data-dir <path>`.  See
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design
+  and the persistence caveats.
+- **`store.serialize()` / `store.restore(snapshot)` /
+  `store.persist(filepath)` / `store.restoreFromFile(filepath)`** on
+  `src/store.js`.  Unit tests added in `test.js`.
+- **`--data-dir <path>` CLI flag** and `PEARLPOOL_DATA_DIR` env var.
+- **Prominent community-project disclaimer** at the top of the
+  README, calling out that PearlPool is not affiliated with Pearl
+  Research Labs (the upstream Pearl core team at
+  `pearl-research-labs/pearl`).
+- **"Production Safety Notes"** section in the README, covering the
+  bootstrap-data-is-synthetic caveat, the JSON-snapshot-not-database
+  caveat, the no-TLS caveat, and the no-DoS-protection caveat.
+- **"Current status" table** in the README's Status & Roadmap
+  section, summarising the state of every subsystem.
+- **`docs/RPC_SETUP.md`** — sample `pearl.conf`, sample RPC
+  responses (`getblocktemplate`, `submitblock`, `sendtoaddress`),
+  retry & error-handling reference for the pool's RPC client.
+- **`docs/SAMPLE_OUTPUT.md`** — sample JSON responses for every
+  public endpoint (`/api/stats`, `/api/miners`, `/api/miner/:addr`,
+  `/api/blocks`, `/api/payouts`, `/api/chart/hashrate`).
+- **`docs/BLOCK_LIFECYCLE.md`** — end-to-end worked example of one
+  block lifecycle, from "share received" to "miners paid".
 - **Historical data bootstrap** (`lib/seed/realistic-bootstrap.js`).  On
   first start of a fresh operator deployment the store is seeded with a
   realistic 48-hour window of hashrate history, block ledger, active
@@ -72,6 +105,15 @@ deducted up to 90%+ from miner payouts; this release deducts exactly
 1.5% (plus dust).  Any dashboards that hard-coded the old fee display
 should be updated to read the new `fee` and `feeBreakdown` fields from
 `/api/stats`.
+
+If you run multiple PearlPool instances (e.g. one per region), point
+each at its own `--data-dir` to avoid clobbering each other's
+`state.json`:
+
+```bash
+node src/pool.js --wallet prl1p... --data-dir /var/lib/pearlpool-eu
+node src/pool.js --wallet prl1p... --data-dir /var/lib/pearlpool-us
+```
 
 ## [0.1.0] - 2025-01-15
 

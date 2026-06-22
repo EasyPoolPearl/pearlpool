@@ -84,8 +84,8 @@ without a daemon.  See `test.js`.
 
 ### `src/store.js` — the persistent state
 
-A tiny key-value store backed by `level` (or, in the default
-configuration, a JSON file at `./data/store.json`).  Holds:
+The in-memory state plus a JSON snapshot file at
+`./data/state.json` (override with `--data-dir`).  Holds:
 
 - `state.cumulativeHashes` — every share ever submitted, summed.
 - `state.hashesSinceLastBlock` — share work since the last found block.
@@ -94,10 +94,34 @@ configuration, a JSON file at `./data/store.json`).  Holds:
 - `state.lastPayout` — `address -> timestamp of last payout`.
 - `state.blocks[]` — recent blocks, both found and orphaned.
 - `state.payouts[]` — last 1000 payout events.
+- `state.hashrateHistory[]` — 24h of 5-minute hashrate samples.
 
-All access goes through `Store.get()` and `Store.set()` so the
-persistence backend can be swapped (e.g. for a `redis` backend) without
-touching the rest of the code.
+**Persistence model**
+
+- The store is a plain in-memory object — no LevelDB, no Redis.
+- `store.serialize()` returns a plain JS object containing all state.
+- `store.persist(filepath)` writes the serialised state to disk using
+  the **atomic** write helper in `lib/persistence/json-snapshot.js`:
+  write to `<file>.tmp`, `fsync`, then `rename` over the target.
+  Readers never see a partial / truncated file.
+- `store.restore(snapshot)` replaces the in-memory state from a
+  previously-serialised snapshot.  Resets `uptime` to `Date.now()`.
+- `store.restoreFromFile(filepath)` reads + parses + restores.
+  Returns `false` if the file does not exist (first start).
+  Throws on corrupt JSON / version mismatch (caller decides whether
+  to refuse to start or fall back to a fresh store).
+- The pool main loop calls `store.persist()` every 60 seconds and on
+  clean shutdown (`SIGINT` / `SIGTERM`).
+- On startup, main() first tries `restoreFromFile(...)`.  If no saved
+  state exists, it falls back to `bootstrapHistoricalData(store, ...)`,
+  which seeds a realistic 48-hour history on the first run.
+  See [BOOTSTRAP.md](BOOTSTRAP.md) for the bootstrap methodology.
+
+This is **enough to survive a clean restart** but is **not** a
+substitute for a proper database: a process crash between snapshots
+can lose pending balances.  A SQLite-backed store is on the roadmap
+([TODO.md](../TODO.md)).  If you operate a pool with real hashrate,
+take regular backups of `data/state.json`.
 
 ### `src/scanner.js` — chain scan and benchmark
 
@@ -215,9 +239,12 @@ pearlpool/
 ├── src/
 │   ├── pool.js          # main entry point
 │   ├── payout.js        # PPLNS engine
-│   ├── store.js         # persistent state
+│   ├── store.js         # persistent state (in-memory + JSON snapshot)
+│   ├── stratum.js       # Stratum protocol server
 │   └── scanner.js       # chain scanner
 ├── lib/
+│   ├── persistence/
+│   │   └── json-snapshot.js   # atomic JSON read/write
 │   └── seed/
 │       └── realistic-bootstrap.js
 ├── public/
@@ -225,12 +252,19 @@ pearlpool/
 ├── docs/
 │   ├── ARCHITECTURE.md  # this file
 │   ├── BOOTSTRAP.md     # bootstrap methodology
-│   └── FEE-STRUCTURE.md # fee breakdown
-├── test.js              # unit tests for PPLNS engine
+│   ├── BLOCK_LIFECYCLE.md   # end-to-end example: share → payout
+│   ├── FEE-STRUCTURE.md # fee breakdown
+│   ├── RPC_SETUP.md     # PRL daemon config + sample responses
+│   ├── SAMPLE_OUTPUT.md # sample /api/* responses
+│   └── ROADMAP.md       # experimental → production trajectory
+├── data/                # created at runtime; state.json snapshots live here
+├── test.js              # unit tests
 ├── package.json
 ├── start.sh
 ├── CHANGELOG.md
 ├── SECURITY.md
+├── CONTRIBUTING.md
+├── TODO.md
 └── README.md
 ```
 
@@ -243,9 +277,25 @@ pearlpool/
 | PPLNS engine           | Payouts not calculated                       | Restart `pool.js`; pending shares retained  |
 | Chain scanner          | Orphan rate stale; payouts still work        | Restart `pool.js`; scanner is stateless    |
 | Daemon RPC             | Blocks not broadcast, payouts not sent       | Restart daemon; `pool.js` retries on next call |
-| Persistent store       | Miners lose accrued balance if unwritten     | Restore from `data/store.json` backup       |
+| Persistent store       | Miners lose accrued balance if unwritten     | Restore from `data/state.json` backup       |
 
 The pool is designed so that the only state that matters is what's in
-`store.js`.  Restarting `pool.js` recovers everything.  Restarting the
-host recovers everything except in-flight RPC calls (which are
-re-issued on the next loop iteration).
+`store.js`.  Restarting `pool.js` recovers everything from
+`data/state.json` (if present).  Restarting the host recovers
+everything except in-flight RPC calls (which are re-issued on the
+next loop iteration).
+
+## Production Safety Notes
+
+- Persistence is `data/state.json` (atomic write, snapshot every
+  60 s + on stop).  A SQLite-backed store is on the roadmap.
+- Bootstrap data is **synthetic** and does not represent real
+  mining activity.  Opt out with `--no-bootstrap`.
+- No TLS, no auth on `/api/*`.  Front with a reverse proxy.
+- No DoS protection on the stratum socket.  Rate-limit at the
+  network layer.
+- This is community software, **not affiliated with Pearl Research
+  Labs**.
+
+See the [Production Safety Notes](../README.md#production-safety-notes)
+section of the README for the full version.

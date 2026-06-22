@@ -179,9 +179,85 @@ test('bootstrap populates store with realistic data', () => {
   assert(after.blocksFound > blocksBefore, 'bootstrap should add historical blocks');
 });
 
-// === Summary ===
-console.log(`\n${'='.repeat(40)}`);
-console.log(`Results: ${passed} passed, ${failed} failed`);
-console.log(`${'='.repeat(40)}\n`);
+// === Persistence ===
+console.log('\nPersistence:');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const snapshot = require('./lib/persistence/json-snapshot');
 
-process.exit(failed > 0 ? 1 : 0);
+function tmpFile(name) {
+  return path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'pearlpool-test-')),
+    name
+  );
+}
+
+(async () => {
+  // save() + load() round trip
+  test('snapshot.save / snapshot.load round-trip', async () => {
+    const fp = tmpFile('state.json');
+    const data = { a: 1, b: 'hello', c: [1, 2, 3], d: { nested: true } };
+    await snapshot.save(fp, data);
+    const loaded = await snapshot.load(fp);
+    assert.deepStrictEqual(loaded, data);
+  });
+
+  // load() returns null for a missing file (NOT throws)
+  test('snapshot.load returns null for missing file', async () => {
+    const fp = tmpFile('does-not-exist.json');
+    const loaded = await snapshot.load(fp);
+    assert.strictEqual(loaded, null);
+  });
+
+  // load() throws on a corrupt JSON file (so we don't silently lose data)
+  test('snapshot.load throws on corrupt file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pearlpool-test-'));
+    const fp = path.join(dir, 'corrupt.json');
+    fs.writeFileSync(fp, '{ this is not: valid json');
+    let threw = false;
+    try {
+      await snapshot.load(fp);
+    } catch (_) {
+      threw = true;
+    }
+    assert(threw, 'corrupt JSON must throw on load');
+  });
+
+  // store.persist() + store.restoreFromFile() end-to-end
+  test('store.persist + store.restoreFromFile round-trip', async () => {
+    const fp = tmpFile('state.json');
+    // Mutate the singleton store
+    store.addWorker('prl1ptest2', 'wA', '127.0.0.1');
+    store.updateMiner('prl1ptest2', { hashrate: 9999, shares: 42 });
+    store.creditPending('prl1ptest2', 12345678);
+
+    await store.persist(fp);
+    assert(fs.existsSync(fp), 'snapshot file should exist on disk');
+
+    // Wipe the in-memory store, then restore
+    const snapshot = store.serialize();
+    store.miners.clear();
+    store.pendingPayouts.clear();
+
+    const restored = await store.restoreFromFile(fp);
+    assert(restored === true, 'restoreFromFile should return true on success');
+    const m = store.getMiner('prl1ptest2');
+    assert(m, 'miner should be back after restore');
+    assert.strictEqual(m.hashrate, 9999);
+    assert.strictEqual(store.getPendingBalance('prl1ptest2').balance, 12345678);
+  });
+
+  // restoreFromFile() returns false for a missing file (does not throw)
+  test('store.restoreFromFile returns false for missing file', async () => {
+    const fp = tmpFile('nope.json');
+    const restored = await store.restoreFromFile(fp);
+    assert.strictEqual(restored, false);
+  });
+
+  // Summary
+  console.log(`\n${'='.repeat(40)}`);
+  console.log(`Results: ${passed} passed, ${failed} failed`);
+  console.log(`${'='.repeat(40)}\n`);
+  process.exit(failed > 0 ? 1 : 0);
+})();
